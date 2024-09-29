@@ -12,46 +12,66 @@ function batchExtractEmails(startRow, numRows) {
   var urls = urlRange.getValues();
 
   var results = [];
-  urls.forEach(function(row) {
+  urls.forEach(function(row, index) {
     var url = row[0];
     if (!url || !url.startsWith("http")) {
       results.push(["Invalid URL"]);
       return;
     }
+
     try {
-      var response = UrlFetchApp.fetch(url, {muteHttpExceptions: true});
-      var html = response.getContentText();
+      Logger.log("Fetching URL (" + (startRow + index) + "): " + url);
+      
+      var options = {
+        muteHttpExceptions: true,
+        timeoutMs: 5000  // Set timeout to 5 seconds
+      };
+      var response = UrlFetchApp.fetch(url, options);
+      
       if (response.getResponseCode() >= 200 && response.getResponseCode() < 300) {
+        var html = response.getContentText();
+        
         var emails = extractEmailsFromText(html);
-        results.push([emails.length > 0 ? emails.join(", ") : "No emails found"]);
+        if (emails.length > 0) {
+          results.push([emails.join(", ")]);
+        } else {
+          var facebookUrl = extractFacebookUrlFromHtml(html);
+          if (facebookUrl) {
+            results.push(["No emails found, Facebook URL: " + facebookUrl]);
+          } else {
+            results.push(["No emails or Facebook URL found"]);
+          }
+        }
       } else {
         results.push(["HTTP Error " + response.getResponseCode()]);
       }
     } catch (e) {
-      results.push(["Error fetching URL: " + e.toString()]);
+      Logger.log("Error fetching URL or timed out: " + e.toString());
+      results.push(["Error fetching URL or timed out: " + e.toString()]);
     }
   });
+
+  Logger.log("Writing results to the sheet...");
   var outputRange = sheet.getRange(startRow, 2, results.length, 1);  // Output in Column B
   outputRange.setValues(results);
 }
 
 function extractEmailsFromText(text) {
   var emails = [];
-  var normalEmailRegex = /[a-zA-Z0-9._-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,6}/g;
-  var obfuscatedEmailRegex = /([a-zA-Z0-9._-]+)\s*\[at\]\s*([a-zA-Z0-9.-]+)(?:\s*\[dot\]\s*([a-zA-Z]{2,6}))?/gi;
+  var emailRegex = /(?:mailto:)?[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,6}/gi; // General email regex
 
   var match;
-  while (match = normalEmailRegex.exec(text)) {
+  while (match = emailRegex.exec(text)) {
     emails.push(match[0]);
-  }
-  while (match = obfuscatedEmailRegex.exec(text)) {
-    var domain = match[2];
-    var topLevelDomain = match[3] ? '.' + match[3] : '';  // Add the TLD if it exists
-    var formattedEmail = match[1] + '@' + domain + topLevelDomain;
-    emails.push(formattedEmail);
   }
 
   return Array.from(new Set(emails));  // Remove duplicates
+}
+
+function extractFacebookUrlFromHtml(html) {
+  var facebookUrlRegex = /href=["'](https?:\/\/(www\.)?facebook\.com\/[^\s"']+)["']/gi;
+  var match = facebookUrlRegex.exec(html);
+  return match ? match[1] : null;
 }
 
 function extractEmailsFromCell() {
